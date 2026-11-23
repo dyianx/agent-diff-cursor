@@ -2,6 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DiffInfo, PATCH_VERSION, ShowResult, WindowStatus, toComparablePath } from "../shared/common";
+import { findFilesChangedByCommand, rememberFilesBeforeCommand } from "./git-changes";
 import { findCursorApp, installExtension, installPatch, readPatchState, uninstallExtension, uninstallPatch } from "./patcher";
 import { deleteAllSnapshots, deleteOldSnapshots, deleteSnapshot, readFileForSnapshot, readSnapshot, saveSnapshot } from "./snapshots";
 import { callWindow, findWindowForFile, listWindows } from "./windows";
@@ -23,20 +24,24 @@ snapshot, show and clear never fail the agent: problems are printed as warnings 
 Add --quiet to print warnings only.
 Add --stdin to take the file from an agent hook's JSON on stdin (the "file_path", "filePath",
 "path" or "notebook_path" field, inside "tool_input" when there is one), e.g. for Claude Code hooks.
-Scripts can send {"cwd": "...", "files": ["a.ts", "b.ts"]} to --stdin instead of passing file names.`;
+Scripts can send {"cwd": "...", "files": ["a.ts", "b.ts"]} to --stdin instead of passing file names.
+
+For shell commands, use "snapshot --git" before and "show --git" after. They need no file names:
+git tells which files the command changed. Works in git repositories only.`;
 
 interface Options {
   files: string[];
   open: boolean;
   quiet: boolean;
   readStdin: boolean;
+  useGit: boolean;
   skipExtension: boolean;
   cursorFolder?: string;
   extensionsFolder?: string;
 }
 
 function parseArguments(args: string[]): Options {
-  const options: Options = { files: [], open: false, quiet: false, readStdin: false, skipExtension: false };
+  const options: Options = { files: [], open: false, quiet: false, readStdin: false, useGit: false, skipExtension: false };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     const takeValue = () => {
@@ -47,6 +52,7 @@ function parseArguments(args: string[]): Options {
     if (arg === "--open") options.open = true;
     else if (arg === "--quiet") options.quiet = true;
     else if (arg === "--stdin") options.readStdin = true;
+    else if (arg === "--git") options.useGit = true;
     else if (arg === "--skip-extension") options.skipExtension = true;
     else if (arg === "--cursor") options.cursorFolder = takeValue();
     else if (arg === "--extensions-dir") options.extensionsFolder = takeValue();
@@ -76,20 +82,22 @@ const HOOK_PATH_FIELDS = ["file_path", "filePath", "path", "notebook_path"];
  * Relative paths are taken from "cwd". Scripts should send paths this way rather than as
  * arguments, so a file name never passes through a shell.
  */
-function readFilesFromHookInput(): string[] {
-  let input: any;
-  try {
-    input = JSON.parse(fs.readFileSync(0, "utf8"));
-  } catch {
-    warn("--stdin: could not read JSON from stdin.");
-    return [];
-  }
+function readFilesFromHookInput(input: any): string[] {
   const toolInput = input?.tool_input ?? input;
   const baseFolder = typeof input?.cwd === "string" ? input.cwd : process.cwd();
   const fileList: unknown[] = Array.isArray(input?.files) ? input.files : [];
   return [...HOOK_PATH_FIELDS.map((field) => toolInput?.[field]), ...fileList]
     .filter((value): value is string => typeof value === "string" && value.length > 0)
     .map((file) => toFullPath(path.resolve(baseFolder, file)));
+}
+
+function readHookInput(): any {
+  try {
+    return JSON.parse(fs.readFileSync(0, "utf8"));
+  } catch {
+    warn("--stdin: could not read JSON from stdin.");
+    return undefined;
+  }
 }
 
 let isQuiet = false;
@@ -156,6 +164,30 @@ async function showChanges(files: string[], open: boolean): Promise<void> {
       warn(`could not show ${file}: ${errorMessage(error)}`);
     }
   }
+}
+
+/**
+ * For shell commands, which don't say which files they will change. Before: remember what git
+ * already sees as changed. After: show every file the command changed.
+ */
+async function handleCommandRun(command: string, input: any, open: boolean): Promise<void> {
+  const folder = typeof input?.cwd === "string" ? input.cwd : process.cwd();
+  // Claude Code gives each tool call an ID, so commands running side by side don't mix.
+  const runKey = typeof input?.tool_use_id === "string" ? input.tool_use_id : path.resolve(folder);
+  if (command === "snapshot") {
+    const problem = rememberFilesBeforeCommand(folder, runKey);
+    if (problem) say(problem);
+    return;
+  }
+  const originals = findFilesChangedByCommand(runKey);
+  if (originals.length === 0) return;
+  const windows = listWindows();
+  for (const original of originals) {
+    // Same rule as "snapshot": while an earlier change still waits for review, keep its snapshot.
+    if (readSnapshot(original.path) && (await isEarlierChangeStillPending(original.path, windows))) continue;
+    saveSnapshot(original);
+  }
+  await showChanges(originals.map((original) => toFullPath(original.path)), open);
 }
 
 async function clearDiffs(files: string[]): Promise<void> {
@@ -247,8 +279,12 @@ async function main(): Promise<number> {
   const options = parseArguments(rest);
   isQuiet = options.quiet;
   const needsFiles = command === "snapshot" || command === "show";
+  if (needsFiles && options.useGit) {
+    await handleCommandRun(command, options.readStdin ? readHookInput() : undefined, options.open);
+    return 0;
+  }
   if (needsFiles && options.readStdin) {
-    options.files.push(...readFilesFromHookInput());
+    options.files.push(...readFilesFromHookInput(readHookInput()));
     // A hook can fire for a tool that has no file. That is not an error.
     if (options.files.length === 0) return 0;
   }
@@ -291,14 +327,16 @@ async function main(): Promise<number> {
 main().then(
   (code) => { process.exitCode = code; },
   (error) => {
+    // Agent-facing commands must never break the agent's run. Even a wrong option (say, from a
+    // newer hook setup) must exit with 0: exit code 2 makes Claude Code block the tool call.
+    const command = process.argv[2];
+    const isHookCommand = command === "snapshot" || command === "show" || command === "clear";
     if (error instanceof UsageError) {
       console.error(`${error.message}\n\n${HELP}`);
-      process.exitCode = 2;
+      process.exitCode = isHookCommand ? 0 : 2;
     } else {
-      const command = process.argv[2];
       console.error(errorMessage(error));
-      // Agent-facing commands must never break the agent's run.
-      process.exitCode = command === "snapshot" || command === "show" || command === "clear" ? 0 : 1;
+      process.exitCode = isHookCommand ? 0 : 1;
     }
   },
 );

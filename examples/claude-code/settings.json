@@ -4,12 +4,26 @@
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [{ "type": "command", "command": "agent-diff snapshot --stdin --quiet" }]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [{ "type": "command", "command": "agent-diff snapshot --git --stdin --quiet" }]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [{ "type": "command", "command": "agent-diff show --stdin --quiet" }]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [{ "type": "command", "command": "agent-diff show --git --stdin --quiet" }]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [{ "type": "command", "command": "agent-diff show --git --stdin --quiet" }]
       }
     ]
   }

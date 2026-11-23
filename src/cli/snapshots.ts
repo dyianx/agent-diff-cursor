@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getSnapshotsFolder, makePrivateFolder, toComparablePath } from "../shared/common";
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024;
+export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_SNAPSHOT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface Snapshot {

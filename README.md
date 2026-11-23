@@ -99,10 +99,19 @@ one project, or once in your global agent settings for every project.
   ```json
   {
     "hooks": {
-      "PreToolUse": [{ "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [{ "type": "command", "command": "agent-diff snapshot --stdin --quiet" }] }],
-      "PostToolUse": [{ "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [{ "type": "command", "command": "agent-diff show --stdin --quiet" }] }]
+      "PreToolUse": [
+        { "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+          "hooks": [{ "type": "command", "command": "agent-diff snapshot --stdin --quiet" }] },
+        { "matcher": "Bash|PowerShell",
+          "hooks": [{ "type": "command", "command": "agent-diff snapshot --git --stdin --quiet" }] }],
+      "PostToolUse": [
+        { "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+          "hooks": [{ "type": "command", "command": "agent-diff show --stdin --quiet" }] },
+        { "matcher": "Bash|PowerShell",
+          "hooks": [{ "type": "command", "command": "agent-diff show --git --stdin --quiet" }] }],
+      "PostToolUseFailure": [
+        { "matcher": "Bash|PowerShell",
+          "hooks": [{ "type": "command", "command": "agent-diff show --git --stdin --quiet" }] }]
     }
   }
   ```
@@ -112,6 +121,21 @@ one project, or once in your global agent settings for every project.
   It was written from OpenCode's plugin docs and has not been tested against a running OpenCode yet.
 - **Anything else:** run `snapshot` on the files before the edit, and `show` on the same files
   after it.
+
+### Changes made by shell commands
+
+An agent can also change files by running a script or a command such as `sed`. A command doesn't
+say which files it will change, so for commands the hooks use `--git` instead of file names:
+
+- `agent-diff snapshot --git` before the command remembers which files git already sees as
+  changed, and copies them.
+- `agent-diff show --git` after the command asks git again and shows every file the command
+  changed. For a file that was unchanged before, the text from before is git's saved copy.
+
+This works in git repositories only. It doesn't see files that git ignores, or files outside the
+repository. If two agents run commands in the same repository at the same time, a file one of
+them changes can show up under the other one's command; it is still shown, just as part of the
+other command.
 
 Several edits in a row are fine. If a file still has a diff on screen, a new `snapshot` keeps the
 first one, so the hunks cover all the edits. Hunks you already kept stay kept.

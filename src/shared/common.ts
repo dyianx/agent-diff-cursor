@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 /** Bump when the code added to Cursor changes, so `install` replaces an older copy. */
-export const PATCH_VERSION = 6;
+export const PATCH_VERSION = 7;
 
 /** Commands the patch adds inside Cursor. The leading "_" hides them from the command palette. */
 export const PATCH_COMMANDS = {
@@ -31,6 +31,8 @@ export function getDataFolder(): string {
 export const getWindowsFolder = () => path.join(getDataFolder(), "windows");
 export const getSnapshotsFolder = () => path.join(getDataFolder(), "snapshots");
 export const getBackupsFolder = () => path.join(getDataFolder(), "backups");
+/** What git reported as changed before each shell command, until the command finishes. */
+export const getCommandRunsFolder = () => path.join(getDataFolder(), "command-runs");
 
 /** Create a folder only this user can open. Snapshots hold copies of the files an agent edits. */
 export function makePrivateFolder(folder: string): void {

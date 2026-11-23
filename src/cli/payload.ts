@@ -122,7 +122,7 @@ export const PAYLOAD_TEMPLATE = String.raw`;(() => {
     // Cursor makes a new handler when Ctrl+Z brings a diff back, so the change goes on the code
     // all handlers share, and only acts on this tool's diffs.
     let isEditHandlingChanged = false;
-    const changeEditHandling = (handler) => {
+    const changeEditHandling = (handler, textFiles) => {
       if (isEditHandlingChanged) return;
       const shared = Object.getPrototypeOf(handler);
       const processOverlapEdit = shared && shared.processOverlapEdit;
@@ -133,7 +133,12 @@ export const PAYLOAD_TEMPLATE = String.raw`;(() => {
       isEditHandlingChanged = true;
       shared.processOverlapEdit = function (edit, eol, ...rest) {
         try {
-          if (ourDiffs.has(this.inlineDiff.id)) addEditOutsideHunksToOriginal(this, edit, eol);
+          // When the agent changes the file on disk, Cursor loads the new text into the editor
+          // as an edit, with this flag set. That is the agent's change, not typing, so it must
+          // stay a hunk. (Cursor 3.29, TextFileEditorModel.doUpdateTextModel.)
+          const fileModel = textFiles.files.get(this.inlineDiff.uri);
+          const isReloadFromDisk = Boolean(fileModel && fileModel.ignoreDirtyOnModelContentChange);
+          if (ourDiffs.has(this.inlineDiff.id) && !isReloadFromDisk) addEditOutsideHunksToOriginal(this, edit, eol);
         } catch (error) {
           console.error("[agent-diff] could not handle an edit:", error);
         }
@@ -182,7 +187,7 @@ export const PAYLOAD_TEMPLATE = String.raw`;(() => {
         }, undefined, false);
         if (!handler) return { diffId: null, changed: true };
         rememberOurDiff(handler.id);
-        changeEditHandling(handler);
+        changeEditHandling(handler, textFiles);
         return { diffId: handler.id, changed: true };
       } finally {
         reference.dispose();
