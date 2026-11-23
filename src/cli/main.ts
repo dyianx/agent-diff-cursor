@@ -2,6 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DiffInfo, PATCH_VERSION, ShowResult, WindowStatus, toComparablePath } from "../shared/common";
+import { Scope, askAboutAgents, parseAgentNames, removeAgentSetup, setUpAgents } from "./agent-setup";
 import { findFilesChangedByCommand, rememberFilesBeforeCommand } from "./git-changes";
 import { findCursorApp, installExtension, installPatch, readPatchState, uninstallExtension, uninstallPatch } from "./patcher";
 import { deleteAllSnapshots, deleteOldSnapshots, deleteSnapshot, readFileForSnapshot, readSnapshot, saveSnapshot } from "./snapshots";
@@ -17,7 +18,13 @@ For agents:
 
 Setup:
   agent-diff install [--cursor <folder>] [--extensions-dir <folder>] [--skip-extension]
+                     [--agents <list>] [--scope global|project]
+      Patch Cursor, then ask which agents should use agent-diff.
+  agent-diff setup [--agents <list>] [--scope global|project]
+      Only set up the agents (Cursor can stay open). <list> is claude, opencode,
+      claude,opencode or none. --scope project means the current folder only; global is the default.
   agent-diff uninstall [--cursor <folder>] [--extensions-dir <folder>] [--skip-extension]
+      Remove the patch, the extension, and the agents' hooks (for all projects and the current folder).
   agent-diff status [--cursor <folder>]
 
 snapshot, show and clear never fail the agent: problems are printed as warnings and the exit code is 0.
@@ -36,6 +43,8 @@ interface Options {
   readStdin: boolean;
   useGit: boolean;
   skipExtension: boolean;
+  agents?: string;
+  scope?: Scope;
   cursorFolder?: string;
   extensionsFolder?: string;
 }
@@ -56,6 +65,12 @@ function parseArguments(args: string[]): Options {
     else if (arg === "--skip-extension") options.skipExtension = true;
     else if (arg === "--cursor") options.cursorFolder = takeValue();
     else if (arg === "--extensions-dir") options.extensionsFolder = takeValue();
+    else if (arg === "--agents") options.agents = takeValue();
+    else if (arg === "--scope") {
+      const scope = takeValue();
+      if (scope !== "global" && scope !== "project") throw new UsageError("--scope must be global or project.");
+      options.scope = scope;
+    }
     else if (arg.startsWith("--")) throw new UsageError(`Unknown option ${arg}.`);
     else options.files.push(toFullPath(arg));
   }
@@ -258,15 +273,37 @@ async function printStatus(options: Options): Promise<void> {
   }
 }
 
+/** Sets up the agents' hooks: from --agents and --scope, or by asking. */
+async function setUpAgentsFromOptions(options: Options): Promise<void> {
+  const projectFolder = process.cwd();
+  let choice: { agents: string[]; scope: Scope } | null;
+  if (options.agents !== undefined) {
+    let agents;
+    try {
+      agents = parseAgentNames(options.agents);
+    } catch (error) {
+      throw new UsageError(errorMessage(error));
+    }
+    choice = { agents, scope: options.scope ?? "global" };
+  } else if (process.stdin.isTTY && process.stdout.isTTY) {
+    choice = await askAboutAgents(projectFolder, options.scope);
+  } else {
+    // Run by a script or an agent: nobody can answer, so only say how.
+    console.log('\nTo make your agents use it, run: agent-diff setup --agents claude,opencode [--scope project]');
+    return;
+  }
+  if (!choice || choice.agents.length === 0) {
+    console.log('No agents set up. Run "agent-diff setup" to do it later.');
+    return;
+  }
+  for (const line of setUpAgents(choice.agents as any, choice.scope, projectFolder)) console.log(line);
+}
+
 function printNextSteps(): void {
-  const examplesFolder = path.join(__dirname, "..", "examples");
   console.log(`
 Next steps:
   1. Restart Cursor (close every window).
   2. Run "agent-diff status" to check that it works.
-  3. Make your agent call "agent-diff snapshot" before each edit and "agent-diff show" after it.
-     Ready-made hooks for Claude Code and a plugin for OpenCode are in:
-     ${examplesFolder}
 After every Cursor update, close Cursor and run "agent-diff install" again.`);
 }
 
@@ -310,13 +347,18 @@ async function main(): Promise<number> {
       const app = findCursorApp(options.cursorFolder);
       for (const line of installPatch(app)) console.log(line);
       if (!options.skipExtension) for (const line of installExtension(app, options.extensionsFolder)) console.log(line);
+      await setUpAgentsFromOptions(options);
       printNextSteps();
       return 0;
     }
+    case "setup":
+      await setUpAgentsFromOptions(options);
+      return 0;
     case "uninstall": {
       const app = findCursorApp(options.cursorFolder);
       for (const line of uninstallPatch(app)) console.log(line);
       if (!options.skipExtension) for (const line of uninstallExtension(app, options.extensionsFolder)) console.log(line);
+      for (const line of removeAgentSetup(process.cwd())) console.log(line);
       return 0;
     }
     default:

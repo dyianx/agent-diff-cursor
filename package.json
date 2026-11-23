@@ -1,6 +1,6 @@
 {
   "name": "agent-diff-cursor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Show edits made by any coding agent as Cursor's inline Keep/Undo diffs.",
   "keywords": [
     "cursor",

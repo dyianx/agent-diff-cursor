@@ -1,19 +1,20 @@
-// OpenCode plugin: show OpenCode's file edits as Cursor inline diffs (Keep / Undo).
+// agent-diff plugin for OpenCode: show OpenCode's file edits as Cursor inline diffs (Keep / Undo).
 //
-// Copy this file to .opencode/plugins/ in a project, or to ~/.config/opencode/plugins/ for all
-// projects. It needs the agent-diff command on the PATH (see the README).
+// "agent-diff setup" puts this file in ~/.config/opencode/plugins/ (all projects) or in
+// .opencode/plugins/ (one project). It needs the agent-diff command on the PATH (see the README).
 //
-// Written from OpenCode's plugin docs (opencode.ai/docs/build/plugins/server, November 2026).
-// Not yet tested against a running OpenCode.
+// Checked against OpenCode 2.4.1: a plugin is a default export with an id and a setup function,
+// edit and write take `path`, patch takes `patchText`, and the shell tool takes `command` and
+// `workdir`. The events before and after a tool call share the call's `id`.
 //
-// How it works: before an edit tool runs, the files it will touch are snapshotted. After it
-// runs, every snapshotted file is shown in Cursor. The docs give no ID that links a "before"
-// event to its "after" event, so the plugin keeps a list of files waiting to be shown.
-import { Plugin } from "@opencode/plugin";
+// How it works: before an edit tool runs, the files it will touch are snapshotted, and after it
+// runs they are shown in Cursor. Before a shell command, git is asked which files are already
+// changed; after it, every file the command changed is shown (git repositories only).
 import { spawn } from "node:child_process";
 import * as path from "node:path";
 
 const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit", "apply_patch"]);
+const SHELL_TOOLS = new Set(["shell", "bash"]);
 
 /** Files a tool call will change, from its arguments. */
 function findFilesInToolInput(input: any): string[] {
@@ -35,39 +36,55 @@ function findFilesInToolInput(input: any): string[] {
   return files;
 }
 
-function runAgentDiff(command: "snapshot" | "show", files: string[]): Promise<void> {
+function runAgentDiff(args: string[], input: object): Promise<void> {
   // On Windows the command is a .cmd file, which only runs through the shell. File names go in
   // as JSON on stdin, never as arguments, so a name like "a&b.ts" cannot run anything.
   // The command never fails the agent; errors here only mean it is not installed.
+  // The arguments are fixed words, so on Windows they go in one command line (Node warns about an
+  // argument list together with the shell).
+  const allArgs = [...args, "--stdin", "--quiet"];
+  const options = { stdio: ["pipe", "ignore", "ignore"] as const, windowsHide: true };
   return new Promise((resolve) => {
-    const child = spawn("agent-diff", [command, "--stdin", "--quiet"], { shell: process.platform === "win32", stdio: ["pipe", "ignore", "ignore"] });
+    const child = process.platform === "win32"
+      ? spawn(`agent-diff ${allArgs.join(" ")}`, { ...options, shell: true })
+      : spawn("agent-diff", allArgs, options);
     child.on("error", () => resolve());
     child.on("close", () => resolve());
     child.stdin.on("error", () => {});
-    child.stdin.end(JSON.stringify({ files }));
+    child.stdin.end(JSON.stringify(input));
   });
 }
 
-export default Plugin.define({
+export default {
   id: "agent-diff",
-  async setup(ctx) {
-    const projectFolder = ctx.location.directory;
-    const filesWaitingToBeShown = new Set<string>();
+  async setup(ctx: any) {
+    const projectFolder: string = ctx.location?.directory ?? process.cwd();
+    /** What each running tool call will need after it finishes, by call ID. */
+    const waiting = new Map<string, { files?: string[]; folder?: string }>();
 
-    await ctx.tool.hook("execute.before", async (event) => {
-      if (!EDIT_TOOLS.has(event.tool)) return;
-      const files = findFilesInToolInput(event.input).map((file) => path.resolve(projectFolder, file));
-      if (files.length === 0) return;
-      for (const file of files) filesWaitingToBeShown.add(file);
-      await runAgentDiff("snapshot", files);
+    await ctx.tool.hook("execute.before", async (event: any) => {
+      const callId = String(event.id ?? `${event.sessionID}:${event.tool}`);
+      if (EDIT_TOOLS.has(event.tool)) {
+        const files = findFilesInToolInput(event.input).map((file) => path.resolve(projectFolder, file));
+        if (files.length === 0) return;
+        waiting.set(callId, { files });
+        await runAgentDiff(["snapshot"], { files });
+      } else if (SHELL_TOOLS.has(event.tool)) {
+        const workdir = event.input?.workdir;
+        const folder = typeof workdir === "string" && workdir ? path.resolve(projectFolder, workdir) : projectFolder;
+        waiting.set(callId, { folder });
+        await runAgentDiff(["snapshot", "--git"], { cwd: folder, tool_use_id: `opencode:${callId}` });
+      }
     });
 
-    // Runs after the tool finished or failed. A failed edit may still have changed some files.
-    await ctx.tool.hook("execute.after", async () => {
-      if (filesWaitingToBeShown.size === 0) return;
-      const files = [...filesWaitingToBeShown];
-      filesWaitingToBeShown.clear();
-      await runAgentDiff("show", files);
+    // Runs after the tool finished or failed. A failed tool may still have changed some files.
+    await ctx.tool.hook("execute.after", async (event: any) => {
+      const callId = String(event.id ?? `${event.sessionID}:${event.tool}`);
+      const call = waiting.get(callId);
+      if (!call) return;
+      waiting.delete(callId);
+      if (call.files) await runAgentDiff(["show"], { files: call.files });
+      else await runAgentDiff(["show", "--git"], { cwd: call.folder, tool_use_id: `opencode:${callId}` });
     });
   },
-});
+};

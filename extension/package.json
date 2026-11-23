@@ -3,7 +3,7 @@
   "displayName": "Agent Diff",
   "description": "Lets the agent-diff command show any agent's edits as Cursor inline diffs.",
   "publisher": "local",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "engines": {
     "vscode": "^1.96.0"

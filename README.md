@@ -43,6 +43,11 @@ Close Cursor completely, then run:
 agent-diff install
 ```
 
+It patches Cursor, then asks which agents should show their edits in Cursor (Claude Code,
+OpenCode, or both), and whether for all projects or only the current folder. It adds the hooks
+for you (see [Using it from an agent](#using-it-from-an-agent)). To answer without questions, pass
+`--agents claude,opencode` (or `none`) and `--scope global` or `--scope project`.
+
 Start Cursor again. Check that it worked:
 
 ```powershell
@@ -62,7 +67,11 @@ Options:
 
 If Cursor starts without the patch, the extension shows a warning that says to run `install`.
 
-To remove it: close Cursor and run `agent-diff uninstall`. It removes the patch and the extension.
+To set up the agents again later, or in another project, run `agent-diff setup` in that
+folder. It asks the same questions, and Cursor can stay open.
+
+To remove it: close Cursor and run `agent-diff uninstall`. It removes the patch, the extension,
+and the agents' hooks for all projects and for the current folder.
 
 ## Commands
 
@@ -92,9 +101,14 @@ binary files are skipped.
 Any agent with "before tool" and "after tool" hooks can call the two commands. Set it up for
 one project, or once in your global agent settings for every project.
 
-- **Claude Code:** add the hooks from
-  [examples/claude-code/settings.json](examples/claude-code/settings.json) to
-  `.claude/settings.json` in a project, or to `~/.claude/settings.json` for all projects:
+`agent-diff install` and `agent-diff setup` do this for you. This is what they add, if you'd
+rather do it by hand:
+
+- **Claude Code:** the hooks from
+  [examples/claude-code/settings.json](examples/claude-code/settings.json), in
+  `~/.claude/settings.json` for all projects, or in `.claude/settings.local.json` for one project
+  (your personal settings, not shared with your team). Other hooks in the file stay as they are,
+  and the old file is saved in `%LOCALAPPDATA%\agent-diff\backups\agent-settings` first:
 
   ```json
   {
@@ -116,9 +130,9 @@ one project, or once in your global agent settings for every project.
   }
   ```
 
-- **OpenCode:** copy [examples/opencode/agent-diff.ts](examples/opencode/agent-diff.ts)
-  to `.opencode/plugins/` in your project, or to `~/.config/opencode/plugins/` for all projects.
-  It was written from OpenCode's plugin docs and has not been tested against a running OpenCode yet.
+- **OpenCode:** the plugin [examples/opencode/agent-diff.ts](examples/opencode/agent-diff.ts),
+  in `~/.config/opencode/plugins/` for all projects, or in `.opencode/plugins/` for one project.
+  It covers edits and shell commands, and was checked against OpenCode 2.4.1.
 - **Anything else:** run `snapshot` on the files before the edit, and `show` on the same files
   after it.
 
