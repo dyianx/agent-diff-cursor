@@ -2,8 +2,23 @@
   "name": "agent-diff-cursor",
   "version": "0.1.0",
   "description": "Show edits made by any coding agent as Cursor's inline Keep/Undo diffs.",
-  "keywords": ["cursor", "diff", "agent", "claude-code", "opencode", "hooks"],
+  "keywords": [
+    "cursor",
+    "diff",
+    "agent",
+    "claude-code",
+    "opencode",
+    "hooks"
+  ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dyianx/agent-diff-cursor.git"
+  },
+  "homepage": "https://github.com/dyianx/agent-diff-cursor#readme",
+  "bugs": {
+    "url": "https://github.com/dyianx/agent-diff-cursor/issues"
+  },
   "bin": {
     "agent-diff": "bin/agent-diff.js"
   },
