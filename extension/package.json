@@ -1,0 +1,19 @@
+{
+  "name": "agent-diff",
+  "displayName": "Agent Diff",
+  "description": "Lets the agent-diff command show any agent's edits as Cursor inline diffs.",
+  "publisher": "local",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {}
+}
